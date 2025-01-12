@@ -6,10 +6,12 @@
 
 #define RLIMIT_SIZE (1024 * 1024 * 16)
 #define BUF_SIZE (1024 * 1024 * 2)
+#define NODE_SIZE (1 << 16)
 
 enum result_type {
     result_type_ok,
     result_type_err,
+    result_type_escape,
 };
 
 struct result {
@@ -19,8 +21,16 @@ struct string {
     char* data;
     int64_t size;
 };
+struct node {
+    struct string string;
+    struct node* next;
+    struct node* prev;
+};
 
 static struct termios term_original;
+static struct node node_data[NODE_SIZE];
+static struct node* node_free;
+static struct node* node_main;
 
 struct result rlimit_init() {
     const rlim_t kstacksize = RLIMIT_SIZE;
@@ -79,19 +89,20 @@ struct result input_update(const struct string src) {
     return (struct result){.type = result_type_ok};
 }
 
-void loop() {
+struct result loop() {
     char buf_data[BUF_SIZE];
     struct string buf = (struct string){.data = buf_data, .size = 0};
     while (1) {
         if (term_update(&buf).type == result_type_err) {
             perror("term_update");
-            return;
+            return (struct result){.type = result_type_err};
         };
         if (input_update(buf).type == result_type_err) {
             perror("input_update");
-            return;
+            return (struct result){.type = result_type_err};
         }
     }
+    return (struct result){.type = result_type_ok};
 }
 struct result deinit() {
     if (term_deinit().type == result_type_err) {
@@ -117,7 +128,10 @@ int main() {
         perror("init");
         return -1;
     }
-    loop();
+    if (loop().type == result_type_err) {
+        perror("loop");
+        return -1;
+    }
     if (deinit().type == result_type_err) {
         perror("deinit");
         return -1;
