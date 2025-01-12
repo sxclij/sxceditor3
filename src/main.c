@@ -78,10 +78,22 @@ struct result term_init() {
     }
     return (struct result){.type = result_type_ok};
 }
+struct result input_ch(struct string src) {
+}
 struct result input_update(const struct string src) {
     for (int64_t i = 0; i < src.size; i++) {
-        if (src.data[i] == 'q') {
-            return (struct result){.type = result_type_escape};
+        struct string ch = (struct string){.data = src.data + i, .size = 0};
+        if(ch.data[0] & 0b10000000 == 0b00000000) {
+            ch.size = 1;
+        } else if(ch.data[0] & 0b11000000 == 0b10000000) {
+            
+        }
+        switch (input_ch(ch).type) {
+            case result_type_escape:
+                return (struct result){.type = result_type_escape};
+            case result_type_err:
+                perror("input_ch");
+                return (struct result){.type = result_type_err};
         }
     }
     return (struct result){.type = result_type_ok};
