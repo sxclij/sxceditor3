@@ -52,7 +52,6 @@ struct result rlimit_init() {
     }
     return (struct result){.type = result_type_ok};
 }
-
 struct result term_update(struct string* dst) {
     dst->size = read(STDIN_FILENO, dst->data, BUF_SIZE);
     return (struct result){.type = result_type_ok};
@@ -79,16 +78,14 @@ struct result term_init() {
     }
     return (struct result){.type = result_type_ok};
 }
-
 struct result input_update(const struct string src) {
     for (int64_t i = 0; i < src.size; i++) {
         if (src.data[i] == 'q') {
-            return (struct result){.type = result_type_err};
+            return (struct result){.type = result_type_escape};
         }
     }
     return (struct result){.type = result_type_ok};
 }
-
 struct result loop() {
     char buf_data[BUF_SIZE];
     struct string buf = (struct string){.data = buf_data, .size = 0};
@@ -97,9 +94,14 @@ struct result loop() {
             perror("term_update");
             return (struct result){.type = result_type_err};
         };
-        if (input_update(buf).type == result_type_err) {
-            perror("input_update");
-            return (struct result){.type = result_type_err};
+        switch (input_update(buf).type) {
+            case result_type_escape:
+                return (struct result){.type = result_type_escape};
+            case result_type_err:
+                perror("input_update");
+                return (struct result){.type = result_type_err};
+            default:
+                break;
         }
     }
     return (struct result){.type = result_type_ok};
@@ -122,7 +124,6 @@ struct result init() {
     }
     return (struct result){.type = result_type_ok};
 }
-
 int main() {
     if (init().type == result_type_err) {
         perror("init");
