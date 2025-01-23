@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 #define RLIMIT_SIZE (1024 * 1024 * 128)
-#define BUFFER_SIZE (1024 * 1024 * 1)
+#define BUFFER_SIZE (1024 * 1024 * 2)
 
 enum bool {
     FALSE,
@@ -33,19 +33,34 @@ struct node {
 enum result limit_init() {
     const rlim_t kstacksize = RLIMIT_SIZE;
     struct rlimit rl = {.rlim_cur = kstacksize, .rlim_max = kstacksize};
-    setrlimit(RLIMIT_STACK, &rl);
-    return RESULT_OK;
+    if (getrlimit(RLIMIT_STACK, &rl) != 0) {
+        printf("getrlimit\n");
+        return RESULT_ERR;
+    }
+    if (rl.rlim_cur >= kstacksize) {
+        return RESULT_OK;
+    }
+    if (setrlimit(RLIMIT_STACK, &rl) != 0) {
+        printf("setrlimit\n");
+        return RESULT_ERR;
+    }
 }
 enum result term_update(struct vec* dst) {
     dst->size = read(STDIN_FILENO, dst->data, BUFFER_SIZE);
     return RESULT_OK;
 }
 enum result term_deinit(struct termios* orig_term) {
-    tcsetattr(STDIN_FILENO, TCSANOW, orig_term);
+    if (tcsetattr(STDIN_FILENO, TCSANOW, orig_term) < 0) {
+        printf("err: tcsetattr\n");
+        return RESULT_ERR;
+    }
     return RESULT_OK;
 }
 enum result term_init(struct termios* orig_term) {
-    tcgetattr(STDIN_FILENO, orig_term);
+    if (tcgetattr(STDIN_FILENO, orig_term) == -1) {
+        printf("err: tcgetattr\n");
+        return RESULT_ERR;
+    }
     struct termios new_termios = *orig_term;
     new_termios.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     new_termios.c_oflag &= ~(OPOST);
@@ -53,7 +68,10 @@ enum result term_init(struct termios* orig_term) {
     new_termios.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     new_termios.c_cc[VMIN] = 0;
     new_termios.c_cc[VTIME] = 1;
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) < 0) {
+        printf("err: tcsetattr\n");
+        return RESULT_ERR;
+    }
     return RESULT_OK;
 }
 enum result input_update(struct vec* src, enum bool* isescape) {
