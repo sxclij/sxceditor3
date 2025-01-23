@@ -4,150 +4,100 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define RLIMIT_SIZE (1024 * 1024 * 16)
-#define BUF_SIZE (1024 * 1024 * 2)
-#define NODE_SIZE (1 << 16)
+#define RLIMIT_SIZE (1024 * 1024 * 128)
+#define BUFFER_SIZE (1024 * 1024 * 1)
 
-enum result_type {
-    result_type_ok,
-    result_type_err,
-    result_type_escape,
+enum bool {
+    FALSE,
+    TRUE,
+};
+enum result {
+    RESULT_OK,
+    RESULT_ERR,
 };
 
-struct result {
-    enum result_type type;
+struct constvec {
+    const char* data;
+    int32_t size;
 };
-struct string {
+struct vec {
     char* data;
-    int64_t size;
+    int32_t size;
 };
 struct node {
-    struct string string;
-    struct node* next;
+    struct vec data;
     struct node* prev;
+    struct node* next;
 };
 
-static struct termios term_original;
-static struct node node_data[NODE_SIZE];
-static struct node* node_free;
-static struct node* node_main;
-
-struct result rlimit_init() {
+enum result limit_init() {
     const rlim_t kstacksize = RLIMIT_SIZE;
-    struct rlimit rl;
-    int result;
-    result = getrlimit(RLIMIT_STACK, &rl);
-    if (result != 0) {
-        perror("getrlimit");
-        return (struct result){.type = result_type_err};
-    }
-    if (rl.rlim_cur >= kstacksize) {
-        return (struct result){.type = result_type_ok};
-    }
-    rl.rlim_cur = kstacksize;
-    result = setrlimit(RLIMIT_STACK, &rl);
-    if (result != 0) {
-        perror("setrlimit");
-        return (struct result){.type = result_type_err};
-    }
-    return (struct result){.type = result_type_ok};
+    struct rlimit rl = {.rlim_cur = kstacksize, .rlim_max = kstacksize};
+    setrlimit(RLIMIT_STACK, &rl);
+    return RESULT_OK;
 }
-struct result term_update(struct string* dst) {
-    dst->size = read(STDIN_FILENO, dst->data, BUF_SIZE);
-    return (struct result){.type = result_type_ok};
+enum result term_update(struct vec* dst) {
+    dst->size = read(STDIN_FILENO, dst->data, BUFFER_SIZE);
+    return RESULT_OK;
 }
-struct result term_deinit() {
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &term_original) == -1) {
-        perror("tcsetattr");
-        return (struct result){.type = result_type_err};
-    }
-    return (struct result){.type = result_type_ok};
+enum result term_deinit(struct termios* orig_term) {
+    tcsetattr(STDIN_FILENO, TCSANOW, orig_term);
+    return RESULT_OK;
 }
-struct result term_init() {
-    if (tcgetattr(STDIN_FILENO, &term_original) == -1) {
-        perror("tcgetattr");
-        return (struct result){.type = result_type_err};
-    }
-    struct termios term_new = term_original;
-    term_new.c_lflag &= ~(ICANON | ECHO);
-    term_new.c_cc[VMIN] = 0;
-    term_new.c_cc[VTIME] = 0;
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &term_new) == -1) {
-        perror("tcsetattr");
-        return (struct result){.type = result_type_err};
-    }
-    return (struct result){.type = result_type_ok};
+enum result term_init(struct termios* orig_term) {
+    tcgetattr(STDIN_FILENO, orig_term);
+    struct termios new_termios = *orig_term;
+    new_termios.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    new_termios.c_oflag &= ~(OPOST);
+    new_termios.c_cflag |= (CS8);
+    new_termios.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    new_termios.c_cc[VMIN] = 0;
+    new_termios.c_cc[VTIME] = 1;
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+    return RESULT_OK;
 }
-struct result input_ch(struct string src) {
-}
-struct result input_update(const struct string src) {
-    for (int64_t i = 0; i < src.size; i++) {
-        struct string ch = (struct string){.data = src.data + i, .size = 0};
-        if(ch.data[0] & 0b10000000 == 0b00000000) {
-            ch.size = 1;
-        } else if(ch.data[0] & 0b11000000 == 0b10000000) {
-            
-        }
-        switch (input_ch(ch).type) {
-            case result_type_escape:
-                return (struct result){.type = result_type_escape};
-            case result_type_err:
-                perror("input_ch");
-                return (struct result){.type = result_type_err};
+enum result input_update(struct vec* src, enum bool* isescape) {
+    for (int32_t i = 0; i < src->size; i++) {
+        if (src->data[i] == 'q') {
+            *isescape = TRUE;
+            return RESULT_OK;
         }
     }
-    return (struct result){.type = result_type_ok};
+    return RESULT_OK;
 }
-struct result loop() {
-    char buf_data[BUF_SIZE];
-    struct string buf = (struct string){.data = buf_data, .size = 0};
-    while (1) {
-        if (term_update(&buf).type == result_type_err) {
-            perror("term_update");
-            return (struct result){.type = result_type_err};
-        };
-        switch (input_update(buf).type) {
-            case result_type_escape:
-                return (struct result){.type = result_type_escape};
-            case result_type_err:
-                perror("input_update");
-                return (struct result){.type = result_type_err};
-            default:
-                break;
+
+enum result main2(struct termios* orig_term) {
+    char term_data[BUFFER_SIZE];
+    struct vec term_vec = {.data = term_data, .size = 0};
+    enum bool isescape = FALSE;
+    while (isescape == FALSE) {
+        if (term_update(&term_vec) == RESULT_ERR) {
+            printf("err: _update\n");
+            return RESULT_ERR;
+        }
+        if (input_update(&term_vec, &isescape) == RESULT_ERR) {
+            printf("err: _update\n");
+            return RESULT_ERR;
         }
     }
-    return (struct result){.type = result_type_ok};
+    return RESULT_OK;
 }
-struct result deinit() {
-    if (term_deinit().type == result_type_err) {
-        perror("term_deinit");
-        return (struct result){.type = result_type_err};
-    }
-    return (struct result){.type = result_type_ok};
-}
-struct result init() {
-    if (rlimit_init().type == result_type_err) {
-        perror("rlimit_init");
-        return (struct result){.type = result_type_err};
-    }
-    if (term_init().type == result_type_err) {
-        perror("term_init");
-        return (struct result){.type = result_type_err};
-    }
-    return (struct result){.type = result_type_ok};
-}
+
 int main() {
-    if (init().type == result_type_err) {
-        perror("init");
-        return -1;
+    struct termios orig_term;
+    if (limit_init() == RESULT_ERR) {
+        printf("err: limit_init\n\n");
+        return 0;
     }
-    if (loop().type == result_type_err) {
-        perror("loop");
-        return -1;
+    if (term_init(&orig_term) == RESULT_ERR) {
+        printf("err: term_init\n\n");
+        return 0;
     }
-    if (deinit().type == result_type_err) {
-        perror("deinit");
-        return -1;
+    if (main2(&orig_term) == RESULT_ERR) {
+        printf("err: main2\n\n");
+    }
+    if (term_deinit(&orig_term) == RESULT_ERR) {
+        printf("err: term_deinit\n\n");
     }
     return 0;
 }
