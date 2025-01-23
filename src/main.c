@@ -49,26 +49,26 @@ enum result term_update(struct vec* dst) {
     dst->size = read(STDIN_FILENO, dst->data, BUFFER_SIZE);
     return RESULT_OK;
 }
-enum result term_deinit(struct termios* orig_term) {
-    if (tcsetattr(STDIN_FILENO, TCSANOW, orig_term) < 0) {
+enum result term_deinit(struct termios* term_orig) {
+    if (tcsetattr(STDIN_FILENO, TCSANOW, term_orig) < 0) {
         printf("err: tcsetattr\n");
         return RESULT_ERR;
     }
     return RESULT_OK;
 }
-enum result term_init(struct termios* orig_term) {
-    if (tcgetattr(STDIN_FILENO, orig_term) == -1) {
+enum result term_init(struct termios* term_orig) {
+    if (tcgetattr(STDIN_FILENO, term_orig) == -1) {
         printf("err: tcgetattr\n");
         return RESULT_ERR;
     }
-    struct termios new_termios = *orig_term;
-    new_termios.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-    new_termios.c_oflag &= ~(OPOST);
-    new_termios.c_cflag |= (CS8);
-    new_termios.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    new_termios.c_cc[VMIN] = 0;
-    new_termios.c_cc[VTIME] = 1;
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) < 0) {
+    struct termios termios_new = *term_orig;
+    termios_new.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    termios_new.c_oflag &= ~(OPOST);
+    termios_new.c_cflag |= (CS8);
+    termios_new.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    termios_new.c_cc[VMIN] = 0;
+    termios_new.c_cc[VTIME] = 1;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &termios_new) < 0) {
         printf("err: tcsetattr\n");
         return RESULT_ERR;
     }
@@ -83,8 +83,7 @@ enum result input_update(struct vec* src, enum bool* isescape) {
     }
     return RESULT_OK;
 }
-
-enum result main2(struct termios* orig_term) {
+enum result main2(struct termios* term_orig) {
     char term_data[BUFFER_SIZE];
     struct vec term_vec = {.data = term_data, .size = 0};
     enum bool isescape = FALSE;
@@ -100,21 +99,20 @@ enum result main2(struct termios* orig_term) {
     }
     return RESULT_OK;
 }
-
 int main() {
-    struct termios orig_term;
+    struct termios term_orig;
     if (limit_init() == RESULT_ERR) {
         printf("err: limit_init\n\n");
         return 0;
     }
-    if (term_init(&orig_term) == RESULT_ERR) {
+    if (term_init(&term_orig) == RESULT_ERR) {
         printf("err: term_init\n\n");
         return 0;
     }
-    if (main2(&orig_term) == RESULT_ERR) {
+    if (main2(&term_orig) == RESULT_ERR) {
         printf("err: main2\n\n");
     }
-    if (term_deinit(&orig_term) == RESULT_ERR) {
+    if (term_deinit(&term_orig) == RESULT_ERR) {
         printf("err: term_deinit\n\n");
     }
     return 0;
