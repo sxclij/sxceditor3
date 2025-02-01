@@ -26,6 +26,12 @@ struct node {
     struct node* prev;
     struct node* next;
 };
+struct cursor {
+    struct node* node;
+    int32_t node_i;
+    int32_t x;
+    int32_t y;
+};
 struct global {
     char block_data[BUFFER_SIZE][BLOCK_SIZE];
     char term_input_data[BUFFER_SIZE];
@@ -34,11 +40,15 @@ struct global {
     struct vec term_input_vec;
     struct vec term_output_vec;
     struct termios term_orig;
+    int32_t tick_count;
     bool isescape;
 };
 
 struct const_vec const_vec_make(const char* data, int32_t size) {
     return (struct const_vec){.data = data, .size = size};
+}
+struct const_vec vec_to_const_vec(struct vec* src) {
+    return (struct const_vec){.data = src->data, .size = src->size};
 }
 struct vec vec_make(char* data, int32_t size) {
     return (struct vec){.data = data, .size = size};
@@ -112,8 +122,25 @@ enum result input_update(struct vec* term_input_vec, bool* isescape) {
     }
     return RESULT_OK;
 }
+enum result global_update(struct global* global) {
+    global->tick_count += 1;
+    return RESULT_OK;
+}
+enum result global_init(struct global* global) {
+    global->tick_count = 0;
+    for(int32_t i=0;i<BUFFER_SIZE;i++) {
+        global->block_vec[i] = vec_make(global->block_data[i], 0);
+    }
+    global->term_input_vec = vec_make(global->term_input_data, 0);
+    global->term_output_vec = vec_make(global->term_output_data, 0);
+    return RESULT_OK;
+}
 enum result loop(struct global* global) {
     while (global->isescape == false) {
+        if (global_update(global) == RESULT_ERR) {
+            printf("at: global_update\n\r");
+            return RESULT_ERR;
+        }
         if (term_update(&global->term_input_vec) == RESULT_ERR) {
             printf("at: term_update\n\r");
             return RESULT_ERR;
@@ -131,13 +158,6 @@ enum result deinit(struct global* global) {
         return RESULT_ERR;
     }
     return RESULT_OK;
-}
-enum result global_init(struct global* global) {
-    for(int32_t i=0;i<BUFFER_SIZE;i++) {
-        global->block_vec[i] = vec_make(global->block_data[i], 0);
-    }
-    global->term_input_vec = vec_make(global->term_input_data, 0);
-    global->term_output_vec = vec_make(global->term_output_data, 0);
 }
 enum result init(struct global* global) {
     if(global_init(global) == RESULT_ERR) {
