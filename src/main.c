@@ -2,11 +2,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/resource.h>
 #include <termios.h>
 #include <unistd.h>
 
-#define RLIMIT_SIZE (1024 * 1024 * 128)
 #define BUFFER_SIZE (1024 * 4)
 #define BLOCK_SIZE 128
 
@@ -15,7 +13,7 @@ enum result {
     RESULT_ERR,
 };
 
-struct constvec {
+struct const_vec {
     const char* const data;
     const int32_t size;
 };
@@ -28,25 +26,26 @@ struct node {
     struct node* prev;
     struct node* next;
 };
+struct global {
+    char block_data[BUFFER_SIZE][BLOCK_SIZE];
+    char term_input_data[BUFFER_SIZE];
+    char term_output_data[BUFFER_SIZE];
+    struct vec block_vec[BUFFER_SIZE];
+    struct vec term_input_vec;
+    struct vec term_output_vec;
+    struct termios term_orig;
+    bool isescape;
+};
 
-enum result limit_init() {
-    const rlim_t kstacksize = RLIMIT_SIZE;
-    struct rlimit rl = {.rlim_cur = kstacksize, .rlim_max = kstacksize};
-    if (getrlimit(RLIMIT_STACK, &rl) != 0) {
-        printf("getrlimit\n\r");
-        return RESULT_ERR;
-    }
-    if (rl.rlim_cur >= kstacksize) {
-        return RESULT_OK;
-    }
-    if (setrlimit(RLIMIT_STACK, &rl) != 0) {
-        printf("setrlimit\n\r");
-        return RESULT_ERR;
-    }
+struct const_vec const_vec_make(const char* data, int32_t size) {
+    return (struct const_vec){.data = data, .size = size};
 }
-enum result term_update(struct vec* dst) {
-    dst->size = read(STDIN_FILENO, dst->data, BUFFER_SIZE);
-    if (dst->size == -1) {
+struct vec vec_make(char* data, int32_t size) {
+    return (struct vec){.data = data, .size = size};
+}
+enum result term_update(struct vec* term_input) {
+    term_input->size = read(STDIN_FILENO, term_input->data, BUFFER_SIZE);
+    if (term_input->size == -1) {
         printf("err: read\n\r");
         return RESULT_ERR;
     }
@@ -77,78 +76,90 @@ enum result term_init(struct termios* term_orig) {
     }
     return RESULT_OK;
 }
-enum result input_ch(struct vec* src, bool* isescape) {
-    if (src->data[0] == 'q') {
+enum result input_ch(struct const_vec src, bool* isescape) {
+    if (src.data[0] == 'q') {
         *isescape = true;
         return RESULT_OK;
     }
-    if (src->size == strlen("🤔") && memcmp(src->data, "🤔", strlen("🤔")) == 0) {
+    if (src.size == strlen("🤔") && memcmp(src.data, "🤔", strlen("🤔")) == 0) {
         printf("err: testerr\n\r");
         return RESULT_ERR;
     }
     return RESULT_OK;
 }
-enum result input_update(struct vec* src, bool* isescape) {
+enum result input_update(struct vec* term_input_vec, bool* isescape) {
     char* ch_data[BUFFER_SIZE];
     int32_t i = 0;
-    while (i < src->size) {
-        struct vec ch_vec;
-        if ((src->data[i] & 0b11111000) == 0b11110000) {
-            ch_vec = (struct vec){.data = src->data + i, .size = 4};
+    while (i < term_input_vec->size) {
+        enum result result;
+        if ((term_input_vec->data[i] & 0b11111000) == 0b11110000) {
+            result = input_ch(const_vec_make(term_input_vec->data + i, 4), isescape);
             i += 4;
-        } else if ((src->data[i] & 0b11110000) == 0b11100000) {
-            ch_vec = (struct vec){.data = src->data + i, .size = 3};
+        } else if ((term_input_vec->data[i] & 0b11110000) == 0b11100000) {
+            result = input_ch(const_vec_make(term_input_vec->data + i, 3), isescape);
             i += 3;
-        } else if ((src->data[i] & 0b11100000) == 0b11000000) {
-            ch_vec = (struct vec){.data = src->data + i, .size = 2};
+        } else if ((term_input_vec->data[i] & 0b11100000) == 0b11000000) {
+            result = input_ch(const_vec_make(term_input_vec->data + i, 2), isescape);
             i += 2;
         } else {
-            ch_vec = (struct vec){.data = src->data + i, .size = 1};
+            result = input_ch(const_vec_make(term_input_vec->data + i, 1), isescape);
             i += 1;
         }
-        if (input_ch(&ch_vec, isescape) == RESULT_ERR) {
-            printf("err: input_ch\n\r");
+        if (result == RESULT_ERR) {
+            printf("at: input_ch\n\r");
             return RESULT_ERR;
         }
     }
     return RESULT_OK;
 }
-enum result main2(struct termios* term_orig) {
-    char term_data[BUFFER_SIZE];
-    char block_data[BUFFER_SIZE][BLOCK_SIZE];
-    struct vec term_vec = {.data = term_data, .size = 0};
-    struct vec block_vec[BUFFER_SIZE];
-    bool isescape = false;
-    for (int32_t i = 0; i < BUFFER_SIZE; i++) {
-        block_vec[i] = (struct vec){.data = block_data[i], .size = 0};
+enum result loop(struct global* global) {
+    while (global->isescape == false) {
+        if (term_update(&global->term_input_vec) == RESULT_ERR) {
+            printf("at: term_update\n\r");
+            return RESULT_ERR;
+        }
+        if (input_update(&global->term_input_vec, &global->isescape) == RESULT_ERR) {
+            printf("at: input_update\n\r");
+            return RESULT_ERR;
+        }
     }
-    while (isescape == false) {
-        if (term_update(&term_vec) == RESULT_ERR) {
-            printf("err: term_update\n\r");
-            return RESULT_ERR;
-        }
-        if (input_update(&term_vec, &isescape) == RESULT_ERR) {
-            printf("err: input_update\n\r");
-            return RESULT_ERR;
-        }
+    return RESULT_OK;
+}
+enum result deinit(struct global* global) {
+    if (term_deinit(&global->term_orig) == RESULT_ERR) {
+        printf("at: term_deinit\n\r");
+        return RESULT_ERR;
+    }
+    return RESULT_OK;
+}
+enum result global_init(struct global* global) {
+    for(int32_t i=0;i<BUFFER_SIZE;i++) {
+        global->block_vec[i] = vec_make(global->block_data[i], 0);
+    }
+    global->term_input_vec = vec_make(global->term_input_data, 0);
+    global->term_output_vec = vec_make(global->term_output_data, 0);
+}
+enum result init(struct global* global) {
+    if(global_init(global) == RESULT_ERR) {
+        printf("at: global_init\n\r");
+        return RESULT_ERR;
+    }
+    if (term_init(&global->term_orig) == RESULT_ERR) {
+        printf("at: term_init\n\r");
+        return RESULT_ERR;
     }
     return RESULT_OK;
 }
 int main() {
-    struct termios term_orig;
-    if (limit_init() == RESULT_ERR) {
-        printf("err: limit_init\n\r\n\r");
-        return 0;
+    static struct global global;
+    if (init(&global) == RESULT_ERR) {
+        printf("at: init\n\r\n\r");
     }
-    if (term_init(&term_orig) == RESULT_ERR) {
-        printf("err: term_init\n\r\n\r");
-        return 0;
+    if (loop(&global) == RESULT_ERR) {
+        printf("at: loop\n\r\n\r");
     }
-    if (main2(&term_orig) == RESULT_ERR) {
-        printf("err: main2\n\r\n\r");
-    }
-    if (term_deinit(&term_orig) == RESULT_ERR) {
-        printf("err: term_deinit\n\r\n\r");
+    if (deinit(&global) == RESULT_ERR) {
+        printf("at: deinit\n\r\n\r");
     }
     return 0;
 }
