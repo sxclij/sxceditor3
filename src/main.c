@@ -28,12 +28,12 @@ struct node {
 };
 struct cursor {
     struct node* node;
-    int32_t node_i;
+    int32_t i;
     int32_t x;
     int32_t y;
 };
+
 static char block_data[BUFFER_SIZE][BLOCK_SIZE];
-static struct vec block_vec[BUFFER_SIZE];
 static char term_input_data[BUFFER_SIZE];
 static struct vec term_input_vec;
 static char term_output_data[BUFFER_SIZE];
@@ -162,11 +162,17 @@ enum result global_update() {
 }
 enum result global_init() {
     tick_count = 0;
-    for (int32_t i = 0; i < BUFFER_SIZE; i++) {
-        block_vec[i] = vec_make(block_data[i], 0);
-    }
     term_input_vec = vec_make(term_input_data, 0);
     term_output_vec = vec_make(term_output_data, 0);
+    for (int32_t i = 0; i < BUFFER_SIZE; i++) {
+        node_data[i] = (struct node){.data = vec_make(block_data[i], 0)};
+    }
+    node_free = node_data;
+    for (int32_t i = 1; i < BUFFER_SIZE; i++) {
+        node_release(&node_data[i]);
+    }
+    cursor_main = (struct cursor){.node = node_allocate(), .i = 0, .x = 0, .y = 0};
+    cursor_cmd = (struct cursor){.node = node_allocate(), .i = 0, .x = 0, .y = 0};
     return RESULT_OK;
 }
 enum result loop() {
