@@ -55,20 +55,20 @@ struct const_vec vec_to_const_vec(struct vec* src) {
 struct vec vec_make(char* data, int32_t size) {
     return (struct vec){.data = data, .size = size};
 }
-void node_free(struct node** free, struct node* node) {
-    node->prev = *free;
-    (*free)->next = node;
-    *free = node;
+void node_release(struct node* node) {
+    node->prev = node_free;
+    node_free->next = node;
+    node_free = node;
 }
-struct node* node_allocate(struct node** free) {
-    struct node* node = *free;
-    *free = (*free)->prev;
+struct node* node_allocate() {
+    struct node* node = node_free;
+    node_free = node_free->prev;
     return node;
 }
-void node_delete(struct node** free, struct node* node) {
+void node_delete(struct node* node) {
     struct node* next = node->next;
     struct node* prev = node->prev;
-    node_free(free, node);
+    node_release(node);
     if (next != NULL) {
         next->prev = prev;
     }
@@ -76,8 +76,8 @@ void node_delete(struct node** free, struct node* node) {
         prev->next = next;
     }
 }
-struct node* node_insert(struct node** free, struct node* next) {
-    struct node* node = node_allocate(free);
+struct node* node_insert(struct node* next) {
+    struct node* node = node_allocate();
     struct node* prev = next->prev;
     node->next = next;
     node->prev = prev;
@@ -87,29 +87,27 @@ struct node* node_insert(struct node** free, struct node* next) {
     }
     return node;
 }
-void node_init(struct node** free, struct cursor* cursor_main, struct cursor* cursor_cmd) {
-}
-enum result term_update(struct vec* term_input) {
-    term_input->size = read(STDIN_FILENO, term_input->data, BUFFER_SIZE);
-    if (term_input->size == -1) {
+enum result term_update() {
+    term_input_vec.size = read(STDIN_FILENO, term_input_vec.data, BUFFER_SIZE);
+    if (term_input_vec.size == -1) {
         printf("err: read\n\r");
         return RESULT_ERR;
     }
     return RESULT_OK;
 }
-enum result term_deinit(struct termios* term_orig) {
-    if (tcsetattr(STDIN_FILENO, TCSANOW, term_orig) < 0) {
+enum result term_deinit() {
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &term_orig) < 0) {
         printf("err: tcsetattr\n\r");
         return RESULT_ERR;
     }
     return RESULT_OK;
 }
-enum result term_init(struct termios* term_orig) {
-    if (tcgetattr(STDIN_FILENO, term_orig) == -1) {
+enum result term_init() {
+    if (tcgetattr(STDIN_FILENO, &term_orig) == -1) {
         printf("err: tcgetattr\n\r");
         return RESULT_ERR;
     }
-    struct termios termios_new = *term_orig;
+    struct termios termios_new = term_orig;
     termios_new.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     termios_new.c_oflag &= ~(OPOST);
     termios_new.c_cflag |= (CS8);
@@ -122,9 +120,9 @@ enum result term_init(struct termios* term_orig) {
     }
     return RESULT_OK;
 }
-enum result input_ch(, struct const_vec src) {
+enum result input_ch(struct const_vec src) {
     if (src.data[0] == 'q') {
-        global->isescape = true;
+        isescape = true;
         return RESULT_OK;
     }
     if (src.size == strlen("🤔") && memcmp(src.data, "🤔", strlen("🤔")) == 0) {
@@ -133,22 +131,22 @@ enum result input_ch(, struct const_vec src) {
     }
     return RESULT_OK;
 }
-enum result input_update(, struct vec* term_input_vec) {
+enum result input_update() {
     char* ch_data[BUFFER_SIZE];
     int32_t i = 0;
-    while (i < term_input_vec->size) {
+    while (i < term_input_vec.size) {
         enum result result;
-        if ((term_input_vec->data[i] & 0b11111000) == 0b11110000) {
-            result = input_ch(global, const_vec_make(term_input_vec->data + i, 4));
+        if ((term_input_vec.data[i] & 0b11111000) == 0b11110000) {
+            result = input_ch(const_vec_make(term_input_vec.data + i, 4));
             i += 4;
-        } else if ((term_input_vec->data[i] & 0b11110000) == 0b11100000) {
-            result = input_ch(global, const_vec_make(term_input_vec->data + i, 3));
+        } else if ((term_input_vec.data[i] & 0b11110000) == 0b11100000) {
+            result = input_ch(const_vec_make(term_input_vec.data + i, 3));
             i += 3;
-        } else if ((term_input_vec->data[i] & 0b11100000) == 0b11000000) {
-            result = input_ch(global, const_vec_make(term_input_vec->data + i, 2));
+        } else if ((term_input_vec.data[i] & 0b11100000) == 0b11000000) {
+            result = input_ch(const_vec_make(term_input_vec.data + i, 2));
             i += 2;
         } else {
-            result = input_ch(global, const_vec_make(term_input_vec->data + i, 1));
+            result = input_ch(const_vec_make(term_input_vec.data + i, 1));
             i += 1;
         }
         if (result == RESULT_ERR) {
@@ -159,29 +157,29 @@ enum result input_update(, struct vec* term_input_vec) {
     return RESULT_OK;
 }
 enum result global_update() {
-    global->tick_count += 1;
+    tick_count += 1;
     return RESULT_OK;
 }
 enum result global_init() {
-    global->tick_count = 0;
+    tick_count = 0;
     for (int32_t i = 0; i < BUFFER_SIZE; i++) {
-        global->block_vec[i] = vec_make(global->block_data[i], 0);
+        block_vec[i] = vec_make(block_data[i], 0);
     }
-    global->term_input_vec = vec_make(global->term_input_data, 0);
-    global->term_output_vec = vec_make(global->term_output_data, 0);
+    term_input_vec = vec_make(term_input_data, 0);
+    term_output_vec = vec_make(term_output_data, 0);
     return RESULT_OK;
 }
 enum result loop() {
-    while (global->isescape == false) {
-        if (global_update(global) == RESULT_ERR) {
+    while (isescape == false) {
+        if (global_update() == RESULT_ERR) {
             printf("at: global_update\n\r");
             return RESULT_ERR;
         }
-        if (term_update(term_input_vec) == RESULT_ERR) {
+        if (term_update() == RESULT_ERR) {
             printf("at: term_update\n\r");
             return RESULT_ERR;
         }
-        if (input_update(global, term_input_vec) == RESULT_ERR) {
+        if (input_update() == RESULT_ERR) {
             printf("at: input_update\n\r");
             return RESULT_ERR;
         }
@@ -189,18 +187,18 @@ enum result loop() {
     return RESULT_OK;
 }
 enum result deinit() {
-    if (term_deinit(term_orig) == RESULT_ERR) {
+    if (term_deinit() == RESULT_ERR) {
         printf("at: term_deinit\n\r");
         return RESULT_ERR;
     }
     return RESULT_OK;
 }
 enum result init() {
-    if (global_init(global) == RESULT_ERR) {
+    if (global_init() == RESULT_ERR) {
         printf("at: global_init\n\r");
         return RESULT_ERR;
     }
-    if (term_init(term_orig) == RESULT_ERR) {
+    if (term_init() == RESULT_ERR) {
         printf("at: term_init\n\r");
         return RESULT_ERR;
     }
